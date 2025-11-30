@@ -1,73 +1,87 @@
 import streamlit as st
 import google.generativeai as genai
-from streamlit_mic_recorder import speech_to_text
 
-# 1. Configure the Page
-st.set_page_config(page_title="My Gemini Agent", page_icon="🤖")
-st.title("🤖 My First AI Agent")
+# 1. Configure Page
+st.set_page_config(page_title="Gemini Voice Agent", page_icon="🎙️")
+st.title("🎙️ Gemini Voice Agent")
 
-# 2. Add a Sidebar for the API Key
+# 2. Sidebar API Key
 with st.sidebar:
     api_key = st.text_input("Enter Google API Key:", type="password")
-    st.markdown("[Get a key here](https://aistudio.google.com/app/apikey)")
 
 # 3. Initialize Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! You can type or speak to me now. How can I help?"}
+        {"role": "assistant", "content": "Hello! Speak or type. I can hear you!"}
     ]
 
-# 4. Display Chat History
+# 4. Display History
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# --- NEW: VOICE INPUT SECTION ---
-# We create a placeholder for the user's input (either text or voice)
+# --- INPUT AREA ---
+# We create a container so the mic and text box don't clutter the screen
+with st.container():
+    # A. Text Input
+    text_prompt = st.chat_input("Type a message...")
+    
+    # B. Audio Input (Native Streamlit Widget)
+    # This creates a built-in mic button
+    audio_file = st.audio_input("Or speak to me")
+
+# --- LOGIC ---
 user_input = None
+is_audio = False
 
-# Option A: The standard text box
-text_input = st.chat_input("Type your message here...")
-if text_input:
-    user_input = text_input
+# Determine if user typed or spoke
+if text_prompt:
+    user_input = text_prompt
+elif audio_file:
+    user_input = audio_file
+    is_audio = True
 
-# Option B: The microphone button
-# This renders a button. When you click it, it records. When you stop, it returns text.
-if not user_input:  # Only show voice if they haven't typed yet
-    st.write("🎙️ **Speak to your agent:**")
-    voice_text = speech_to_text(
-        language='en',
-        start_prompt="Click to Record",
-        stop_prompt="Stop Recording",
-        just_once=True,
-        key='STT'
-    )
-    if voice_text:
-        user_input = voice_text
-
-# 5. Handle the Input (Text OR Voice)
 if user_input:
-    # Display user message
+    # 1. Show User Input
     with st.chat_message("user"):
-        st.write(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
+        if is_audio:
+            st.audio(user_input)  # Play back what you said
+            st.write("*(Voice Message)*")
+        else:
+            st.write(user_input)
+    
+    # Add to history (we store a placeholder for audio in history to keep it simple)
+    st.session_state.messages.append({"role": "user", "content": "*(Voice Message)*" if is_audio else user_input})
 
-    # Check for API Key
+    # 2. Check API Key
     if not api_key:
-        st.info("Please add your API key in the sidebar to continue.")
+        st.error("Please enter your API key in the sidebar.")
         st.stop()
 
-    # Call Gemini API
+    # 3. Call Gemini
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') 
-        
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = model.generate_content(user_input)
+            with st.spinner("Listening & Thinking..."):
+                # MAGIC: We send the audio file DIRECTLY to Gemini!
+                # It "hears" the audio without us needing to transcribe it first.
+                if is_audio:
+                    # Create a dictionary for the audio blob
+                    audio_bytes = user_input.read()
+                    response = model.generate_content([
+                        "Listen to this audio and respond naturally to the user.",
+                        {"mime_type": "audio/wav", "data": audio_bytes}
+                    ])
+                else:
+                    # Standard text chat
+                    response = model.generate_content(user_input)
+                
                 st.write(response.text)
         
+        # Save assistant response
         st.session_state.messages.append({"role": "assistant", "content": response.text})
 
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"Error: {e}")
